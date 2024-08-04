@@ -8,7 +8,8 @@
 // crude map impl to track entity damage
 // each key is the entity's id (TODO: look into if id is truly unique or if we need some sort of "uuid" impl)
 // each key points to an object that contains the following:
-//   of player id to damage dealt
+// previousDamageEvent: an object tracking the player and health value of the previous hurt event
+// playerDamageMap: a crude map of player id to damage dealt, we use this to split XP/difficulty increase of a killed entity among players with a proportional percentage of those points applied via damage/max health
 const damageMap = {}
 
 // some quick notes about zombieDifficultyIncreaseMap:
