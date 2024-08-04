@@ -1,0 +1,26 @@
+{
+  "name": "kubejs-snepsts-test",
+  "type": "module",
+  "version": "0.0.1",
+  "description": "Alternate implementation of difficulty scaling in improvedmobs (using kubejs)",
+  "author": "Snepsts",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Snepsts/improvedmobs-difficulty-is-game-stage-kubejs"
+  },
+  "keywords": [
+    "Cursed Walking",
+    "1.20.1",
+    "minecraft",
+    "kubejs"
+  ],
+  "main": "nahhh",
+  "scripts": {
+    "test": "not yet, run this and it'll fail"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^2.24.1",
+    "eslint": "^9.8.0"
+  }
+}
