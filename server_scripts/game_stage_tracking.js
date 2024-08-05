@@ -1,5 +1,24 @@
 // type/prop info: https://mappings.dev/1.20.1/index.html
 
+// SCRIPT SETTINGS START HERE
+/**
+  some quick notes about zombieBaseXpMap:
+  crude map impl to track xp value for a killed zombie
+  each key is the zombie's tag, and the value is the xp they're worth
+  the idea is stronger zombie tags (like minibosses and bosses) will have higher xp
+ */
+const zombieBaseXpMap = {
+  // TODO: fine tune these values and find the other zombie tags present in the mod
+  'minecraft:zombie': 1, // basic enemy, low XP
+  'mutantmonsters:mutant_zombie': 50, // this thing takes forever to kill wtf, deserves a lot of XP
+  'fallbackValue': 1, // this should probably always match the minimum zombie/mutant value to be safe
+}
+
+const debugLog = true // enable debug logging for features actively in development
+const extraDebugLog = false // enable debug logging for features that are considered "stable" (WARNING: noisy)
+const treatMissingImprovedMobsNbtAsZero = true // if the improvedmobs difficulty is 0 it's not present on the user
+// SCRIPT SETTINGS END HERE
+
 // TODO: needs optimization probably
 // TODO: are IDs reliable (i.e: entity with ID 2145 despawns, is it guaranteed a new entity with ID 2145 doesn't spawn again anytime soon???)
 // TODO: Map rest of zombies
@@ -12,19 +31,7 @@
 // playerDamageMap: a crude map of player id to damage dealt, we use this to split XP/difficulty increase of a killed entity among players with a proportional percentage of those points applied via damage/max health
 const damageMap = {}
 
-// some quick notes about zombieDifficultyIncreaseMap:
-// crude map impl to track difficulty value for a killed zombie
-// each key is the zombie's tag, and the value is the difficulty value they're worth
-// the idea is stronger zombie tags (like minibosses and bosses) will have higher difficulties/contribute more to difficulty
-const zombieDifficultyIncreaseMap = {
-  // TODO: fine tune these values and find the other zombie tags present in the mod
-  'minecraft:zombie': 0.0025,
-  'fallbackValue': 0.0025,
-}
-
-// Start custom debugger logger
-const debugLog = true
-const extraDebugLog = false
+// custom debug logger that prints messages to server
 function logToServer(msg, extraLog) {
   if (extraLog) {
     if (extraDebugLog) {
@@ -34,7 +41,6 @@ function logToServer(msg, extraLog) {
     Utils.server.tell(msg)
   }
 }
-// End custom debugger logger
 
 // function trackDamage: logic to deal with per-player damage tracking
 // arg damageEntity: a top-level entry from the damageMap (i.e: damageMap[event.entity.id])
@@ -121,24 +127,92 @@ function isZombie(entity) {
   return entityTag.includes('zombie')
 }
 
-// function getDifficultyIncreaseValueForZombie: simple getter with conservative fallback value for any tags not supported yet
+// function getZombieBaseXp: simple getter with conservative fallback value for any tags not supported yet
 // arg zombieTag: the entity (zombie) tag (i.e: event.entity.type.toString())
-function getDifficultyIncreaseValueForZombie(zombieTag) {
-  const difficultyValue = zombieDifficultyIncreaseMap[zombieTag]
-  return difficultyValue || zombieDifficultyIncreaseMap.fallbackValue
+function getZombieBaseXp(zombieTag) {
+  logToServer(`Searching for ${zombieTag} in zombie map`, true)
+  const difficultyValue = zombieBaseXpMap[zombieTag]
+  return difficultyValue || zombieBaseXpMap.fallbackValue
 }
 
 // function increaseDifficultyForPlayer: Runs the command to increase difficulty
 // arg killedEntity: killed entity's object (i.e: event.entity)
 // arg server: server object (i.e: event.server)
-// arg username: Name of user to increase difficulty of (i.e: event.player.username)
+// arg player: Player to increase difficulty of (i.e: event.player)
 // arg modifier: Value between 0-1 to multiply base difficulty value by to arrive at the final value
-function increaseDifficultyForPlayer(killedEntity, server, username, modifier) {
+function increaseDifficultyForPlayer(killedEntity, server, player, modifier) {
+  const playerLevelInfo = getLevelObject(player)
+  if (!playerLevelInfo) {
+    logToServer('Cannot increase XP of player because there is no improved mobs NBT data on the player.')
+    return
+  }
   const zombieTag = killedEntity.type.toString()
-  const difficultyIncreaseBaseValue = getDifficultyIncreaseValueForZombie(zombieTag)
-  const finalDifficultyIncreaseValue = difficultyIncreaseBaseValue * modifier
-  server.runCommandSilent(`improvedmobs difficulty player ${username} add ${finalDifficultyIncreaseValue}`)
-  logToServer(`Added ${finalDifficultyIncreaseValue} difficulty to ${username}'s difficulty value.`)
+  const zombieBaseXp = getZombieBaseXp(zombieTag) // get base XP for this entity
+  // TODO: Adjust XP with a multiplier based on the zombie's equipment
+  const levelAdjustedXp = zombieBaseXp / playerLevelInfo.totalXpRequiredForNextLevel
+  const finalDifficultyIncreaseValue = levelAdjustedXp * modifier
+
+  // debug leveling system
+  logToServer(`Base XP to be rewarded: ${zombieBaseXp}`)
+  logToServer(`XP converted to progress: ${levelAdjustedXp}`)
+  logToServer(`Damage % of kill adjustment: ${finalDifficultyIncreaseValue}`)
+
+  // "award" XP
+  server.runCommandSilent(`improvedmobs difficulty player ${player.username} add ${finalDifficultyIncreaseValue}`)
+
+  // log the user's progress for debugging purposes
+  const newProgress = playerLevelInfo.progress + finalDifficultyIncreaseValue
+  let finalProgress
+  if (newProgress > 1) { // level-up
+    finalProgress = newProgress - 1
+    playerLevelInfo.level++
+  } else {
+    finalProgress = newProgress
+  }
+  logToServer(`${player.username} is level ${playerLevelInfo.level} and is ${finalProgress * 100}% of the way to the next level`)
+}
+
+// function getImprovedMobsDifficultyFromPlayer: Gets numeric value of player's current improvedmobs difficulty
+// arg player: the player object (i.e: event.player)
+function getImprovedMobsDifficultyFromPlayer(player) {
+  let difficulty = treatMissingImprovedMobsNbtAsZero ? 0 : null
+  try {
+    let fetchedDifficulty = Number(player.nbt.ForgeCaps['improvedmobs:player_cap'].IMDifficulty)
+    difficulty = fetchedDifficulty
+  } catch (err) {
+    logToServer(`Getting difficulty for player with id ${player.id} & username ${player.username} failed. Err: ${err.message}`)
+  }
+
+  return difficulty
+}
+
+// function getLevelObject: Gets level data for player based on their improvedmobs difficulty value
+// arg player: a player object (i.e: event.player)
+function getLevelObject(player) {
+  const improvedMobsDifficulty = getImprovedMobsDifficultyFromPlayer(player)
+  if (improvedMobsDifficulty === null) {
+    logToServer(`Failed to grab level object for player with ID ${player.id} and name ${player.name}`)
+    return null
+  }
+
+  console.log(improvedMobsDifficulty)
+
+  const [levelStr, progressStr] = String(improvedMobsDifficulty).split('.')
+  const level = Number(levelStr)
+  const progress = progressStr === undefined ? 0 : Number(`0.${progressStr}`)
+
+  const totalXpRequiredForNextLevel = getXpRequiredForLevel(level)
+
+  logToServer(`Fetching ${player.username}'s level data. Progress: ${progress}, level: ${level}, totalXpRequiredForNextLevel: ${totalXpRequiredForNextLevel}`, true)
+
+  return { level: level, progress: progress, totalXpRequiredForNextLevel: totalXpRequiredForNextLevel }
+}
+
+// function getXpRequiredForLevel: algorithm to calculate XP needed to level up for a given integer level (VERY SUBJECT TO CHANGE)
+// arg currentLevel: level to calculate the Xp for
+function getXpRequiredForLevel(currentLevel) {
+  const x = currentLevel + 5
+  return x * Math.log2(x)
 }
 
 // wrapper to fix crashes on game startup
@@ -166,19 +240,6 @@ function logPropsFromObj(obj, requiredSubStrings) { // eslint-disable-line no-un
 
   logToServer('Object props:')
   logToServer(msg)
-}
-
-// function getImprovedMobsDifficultyFromPlayer: Gets numeric value of player's current improvedmobs difficulty
-// arg player: the player object (i.e: event.player)
-function getImprovedMobsDifficultyFromPlayer(player) {
-  let difficulty = null
-  try {
-    difficulty = Number(player.nbt.ForgeCaps['improvedmobs:player_cap'].IMDifficulty)
-  } catch (err) {
-    logToServer(`Getting difficulty for player with id ${player.id} & username ${player.username}`)
-  }
-
-  return difficulty
 }
 
 EntityEvents.hurt((event) => {
@@ -243,7 +304,7 @@ EntityEvents.death((event) => {
     }
 
     try {
-      increaseDifficultyForPlayer(event.entity, event.server, player.username, playerKillContributionMap[playerId])
+      increaseDifficultyForPlayer(event.entity, event.server, player, playerKillContributionMap[playerId])
     } catch (err) {
       logToServer(`Encountered error trying to increase mob difficulty for player with ID ${playerId}: ${err.message}.`)
     }
