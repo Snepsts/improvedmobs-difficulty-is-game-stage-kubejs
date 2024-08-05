@@ -1,4 +1,4 @@
-// type/prop info: https://mappings.dev/1.20.2/index.html
+// type/prop info: https://mappings.dev/1.20.1/index.html
 
 // TODO: needs optimization probably
 // TODO: are IDs reliable (i.e: entity with ID 2145 despawns, is it guaranteed a new entity with ID 2145 doesn't spawn again anytime soon???)
@@ -146,6 +146,39 @@ try {
   logToServer('Hello, World! (Loaded server scripts)')
 } catch (err) {
   // swallow error, log not working on world start shouldn't crash the script
+}
+
+// function to help figure out object props in the dark, obj is js object, requiredSubStrings is an array of strings (should be all lowercase)
+function logPropsFromObj(obj, requiredSubStrings) { // eslint-disable-line no-unused-vars
+  if (!obj) {
+    logToServer('logPropsFromObj failed cuz obj don\'t exist')
+    return
+  }
+
+  if (!requiredSubStrings)
+    requiredSubStrings = []
+  let msg = ''
+  for (const key in obj) {
+    if (requiredSubStrings.length === 0 || requiredSubStrings.some(subStr => key.toLowerCase().includes(subStr))) {
+      msg += `${key} `
+    }
+  }
+
+  logToServer('Object props:')
+  logToServer(msg)
+}
+
+// function getImprovedMobsDifficultyFromPlayer: Gets numeric value of player's current improvedmobs difficulty
+// arg player: the player object (i.e: event.player)
+function getImprovedMobsDifficultyFromPlayer(player) {
+  let difficulty = null
+  try {
+    difficulty = Number(player.nbt.ForgeCaps['improvedmobs:player_cap'].IMDifficulty)
+  } catch (err) {
+    logToServer(`Getting difficulty for player with id ${player.id} & username ${player.username}`)
+  }
+
+  return difficulty
 }
 
 EntityEvents.hurt((event) => {
